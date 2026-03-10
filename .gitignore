@@ -1,0 +1,4 @@
+.venv/
+.DS_Store
+etf_returns.csv
+__pycache__/

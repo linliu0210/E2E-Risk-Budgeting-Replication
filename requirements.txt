@@ -1,0 +1,7 @@
+torch
+cvxpy
+cvxpylayers
+yfinance
+matplotlib
+numpy
+pandas
