@@ -1,18 +1,28 @@
 """
-Data acquisition module: real ETF data via yfinance + simulated data.
+Data acquisition: real ETF data via yfinance + simulated data generation.
 Ref: Section 4.1, 5 of Uysal et al. (2021).
+
+Key design decisions:
+  - μ is HARDCODED from paper Section 4.1 (not computed dynamically)
+  - Σ is computed from real 2011-2021 ETF data
+  - Section 5.4.2 augmented universe adds a synthetic low-vol asset
 """
 import numpy as np
 import pandas as pd
-import yfinance as yf
+import os
+
 from config import (
     ETF_TICKERS, DATA_START, DATA_END,
-    IN_SAMPLE_START, OUT_SAMPLE_END
+    SIM_MU_PAPER, RANDOM_ASSET_MU, RANDOM_ASSET_SIGMA,
 )
 
 
+# ======================================================================
+# Real ETF Data
+# ======================================================================
+
 def download_etf_data(
-    tickers: list[str] = ETF_TICKERS,
+    tickers: list[str] | None = None,
     start: str = DATA_START,
     end: str = DATA_END,
     cache_path: str | None = None,
@@ -21,8 +31,11 @@ def download_etf_data(
     Download daily adjusted close prices for ETFs, compute daily returns.
 
     Returns:
-        pd.DataFrame with columns = tickers, index = dates, values = daily returns.
+        pd.DataFrame: columns=tickers, index=dates, values=daily simple returns.
     """
+    if tickers is None:
+        tickers = ETF_TICKERS
+
     if cache_path is not None:
         try:
             returns = pd.read_csv(cache_path, index_col=0, parse_dates=True)
@@ -31,20 +44,19 @@ def download_etf_data(
         except FileNotFoundError:
             pass
 
+    import yfinance as yf
     print(f"[data_loader] Downloading {tickers} from {start} to {end}...")
     data = yf.download(tickers, start=start, end=end, auto_adjust=True)
 
-    # yfinance returns MultiIndex columns; extract 'Close'
+    # Handle MultiIndex columns from yfinance
     if isinstance(data.columns, pd.MultiIndex):
         prices = data["Close"]
     else:
         prices = data
 
-    # Compute daily simple returns: r_t = (P_t - P_{t-1}) / P_{t-1}
+    # Daily simple returns: r_t = (P_t - P_{t-1}) / P_{t-1}
     returns = prices.pct_change().dropna()
-
-    # Ensure column order matches tickers
-    returns = returns[tickers]
+    returns = returns[tickers]  # ensure column order
 
     if cache_path is not None:
         returns.to_csv(cache_path)
@@ -53,74 +65,147 @@ def download_etf_data(
     return returns
 
 
-def generate_simulated_data(
-    n_days: int = 175 + 150,  # need lookback + test days
-    seed: int = 42,
-) -> pd.DataFrame:
+# ======================================================================
+# Distribution Parameters for Simulation
+# ======================================================================
+
+def compute_distribution_params(
+    tickers: list[str] | None = None,
+    start: str = "2011-01-01",
+    end: str = "2021-06-30",
+    cache_path: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate simulated multi-asset returns from a multivariate normal.
-    Parameters calibrated from 7 ETFs (2011-2021) as described in Section 4.1.
+    Compute μ and Σ for simulated data generation (Section 4.1).
 
-    Ref: "The distribution parameters are determined by the mean and covariance
-         matrix of daily returns of seven ETFs from 2011 to 2021"
+    μ is HARDCODED from the paper: [0.059, 0.013, -0.011, 0.022, 0.056, 0.017, 0.017] %
+    Σ is computed from real ETF daily returns (2011-2021).
 
-    Expected daily returns (from paper Section 4.1):
-        [0.059%, 0.013%, -0.011%, 0.022%, 0.056%, 0.017%, 0.017%]
+    Returns:
+        mu: (n_assets,) mean daily returns
+        cov: (n_assets, n_assets) covariance matrix
     """
-    np.random.seed(seed)
+    if tickers is None:
+        tickers = ETF_TICKERS
 
-    # Mean daily returns from Section 4.1 (in decimal form)
-    mu = np.array([0.00059, 0.00013, -0.00011, 0.00022, 0.00056, 0.00017, 0.00017])
+    # μ: hardcoded from paper Section 4.1 (percentage → decimal)
+    mu = np.array(SIM_MU_PAPER) / 100.0
 
-    # Approximate covariance matrix (from typical ETF correlations)
-    # Using representative values; exact values not in paper
-    daily_vols = np.array([0.0111, 0.0138, 0.0025, 0.0046, 0.0032, 0.0102, 0.0100])
-
-    # Correlation matrix (approximate)
-    corr = np.array([
-        [1.00, 0.90, 0.05, 0.20, 0.10, 0.30, 0.05],  # VTI
-        [0.90, 1.00, 0.03, 0.18, 0.08, 0.28, 0.03],  # IWM
-        [0.05, 0.03, 1.00, 0.70, 0.65, -0.05, 0.15], # AGG
-        [0.20, 0.18, 0.70, 1.00, 0.55, 0.05, 0.10],  # LQD
-        [0.10, 0.08, 0.65, 0.55, 1.00, -0.05, 0.10], # MUB
-        [0.30, 0.28, -0.05, 0.05, -0.05, 1.00, 0.30],# DBC
-        [0.05, 0.03, 0.15, 0.10, 0.10, 0.30, 1.00],  # GLD
-    ])
-
-    # Σ = diag(σ) @ corr @ diag(σ)
-    D = np.diag(daily_vols)
-    cov = D @ corr @ D
+    # Σ: from real ETF data
+    returns = download_etf_data(tickers, start, end, cache_path=cache_path)
+    cov = returns.cov().values
 
     # Ensure PSD
     eigvals = np.linalg.eigvalsh(cov)
     if np.any(eigvals < 0):
-        cov += (-eigvals.min() + 1e-8) * np.eye(len(mu))
+        cov += (-eigvals.min() + 1e-10) * np.eye(len(mu))
 
-    # Generate returns
-    returns_np = np.random.multivariate_normal(mu, cov, size=n_days)
+    return mu, cov
 
-    # Create DataFrame with fake dates
+
+# ======================================================================
+# Simulated Data Generation
+# ======================================================================
+
+def generate_simulated_data(
+    n_days: int,
+    seed: int = 42,
+    mu: np.ndarray | None = None,
+    cov: np.ndarray | None = None,
+    cache_path: str | None = None,
+) -> pd.DataFrame:
+    """
+    Generate simulated multi-asset returns from a multivariate normal.
+
+    Section 4.1: "The distribution parameters are determined by the mean
+    and covariance matrix of daily returns of seven ETFs from 2011 to 2021"
+
+    Args:
+        n_days: total number of days to generate (warmup + train + test)
+        seed: random seed for reproducibility
+        mu: mean vector (if None, computed from real data)
+        cov: covariance matrix (if None, computed from real data)
+
+    Returns:
+        pd.DataFrame with shape (n_days, 7)
+    """
+    if mu is None or cov is None:
+        mu, cov = compute_distribution_params(cache_path=cache_path)
+
+    rng = np.random.RandomState(seed)
+    returns_np = rng.multivariate_normal(mu, cov, size=n_days)
+
     dates = pd.bdate_range(start="2020-01-01", periods=n_days)
     returns = pd.DataFrame(returns_np, index=dates, columns=ETF_TICKERS)
 
     return returns
 
 
+# ======================================================================
+# Augmented Universe (Section 5.4.2)
+# ======================================================================
+
+def generate_augmented_universe(
+    returns_7etf: pd.DataFrame,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Section 5.4.2: Add a synthetic low-volatility, low-return random asset
+    to the 7-ETF universe for testing Stochastic Gates filtering.
+
+    "a random asset with a mean of −0.05% and standard deviation of 0.05%"
+
+    Args:
+        returns_7etf: original 7-ETF returns DataFrame
+        seed: random seed
+
+    Returns:
+        pd.DataFrame with 8 columns (7 ETF + 1 RANDOM)
+    """
+    rng = np.random.RandomState(seed)
+    n_days = len(returns_7etf)
+
+    random_returns = rng.normal(RANDOM_ASSET_MU, RANDOM_ASSET_SIGMA, n_days)
+    random_series = pd.Series(
+        random_returns, index=returns_7etf.index, name="RANDOM"
+    )
+
+    returns_8 = pd.concat([returns_7etf, random_series], axis=1)
+    return returns_8
+
+
+# ======================================================================
+# Main (smoke test)
+# ======================================================================
+
 if __name__ == "__main__":
-    # Quick test with simulated data
-    sim_returns = generate_simulated_data(n_days=325, seed=42)
+    # 1. Test simulated data
     print("=== Simulated Data ===")
-    print(f"Shape: {sim_returns.shape}")
-    print(f"Mean daily returns (%):\n{sim_returns.mean() * 100}")
-    print(f"Annualized vol:\n{sim_returns.std() * np.sqrt(252)}")
+    cache = os.path.join(os.path.dirname(__file__), "etf_returns.csv")
+    mu, cov = compute_distribution_params(cache_path=cache)
+    print(f"μ (hardcoded, ×10000): {(mu * 10000).round(1)}")
+    print(f"Σ shape: {cov.shape}")
+    print(f"Σ is PSD: {np.all(np.linalg.eigvalsh(cov) > 0)}")
+
+    from config import SIM_TOTAL_DAYS
+    sim_data = generate_simulated_data(SIM_TOTAL_DAYS, seed=0, mu=mu, cov=cov)
+    print(f"Simulated returns shape: {sim_data.shape}")  # (355, 7)
+    print(f"Mean daily returns (%):\n{sim_data.mean() * 100}")
     print()
 
-    # Download real data (will be slow first time)
+    # 2. Test augmented universe
+    print("=== Augmented Universe ===")
+    aug_data = generate_augmented_universe(sim_data, seed=0)
+    print(f"Augmented shape: {aug_data.shape}")  # (355, 8)
+    print(f"RANDOM asset mean: {aug_data['RANDOM'].mean():.6f}")
+    print(f"RANDOM asset std:  {aug_data['RANDOM'].std():.6f}")
+    print()
+
+    # 3. Test real data download
     try:
-        real_returns = download_etf_data(cache_path="etf_returns.csv")
+        real_data = download_etf_data(cache_path=cache)
         print("=== Real ETF Data ===")
-        print(f"Shape: {real_returns.shape}")
-        print(f"Date range: {real_returns.index[0]} to {real_returns.index[-1]}")
-        print(f"Mean daily returns (%):\n{real_returns.mean() * 100}")
+        print(f"Shape: {real_data.shape}")
+        print(f"Date range: {real_data.index[0]} to {real_data.index[-1]}")
     except Exception as e:
-        print(f"Could not download real data: {e}")
+        print(f"Could not load real data: {e}")

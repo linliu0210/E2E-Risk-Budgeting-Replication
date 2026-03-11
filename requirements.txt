@@ -1,7 +1,17 @@
-torch
-cvxpy
-cvxpylayers
-yfinance
-matplotlib
-numpy
-pandas
+# E2E Risk Budgeting — Uysal et al. (2021) Replication
+# pip install -r requirements.txt
+#
+# Original paper environment: PyTorch 1.8.1, CvxpyLayers 0.1.4
+# (Princeton Tiger cluster, Skylake CPUs)
+#
+# This replication uses modern versions. If numerical results diverge,
+# consider pinning to older versions.
+
+torch>=2.0
+cvxpy>=1.4
+cvxpylayers>=0.1.6
+yfinance>=0.2
+numpy>=1.24
+pandas>=2.0
+scipy>=1.11
+matplotlib>=3.7

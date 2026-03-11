@@ -1,11 +1,11 @@
 """
 Evaluation module: portfolio performance metrics and visualization.
-Ref: Table 1, 4, 5, 6 of Uysal et al. (2021).
+Ref: Tables 1, 4, 5, 6, 7 of Uysal et al. (2021).
 
 Metrics:
-  - Annualized Return
+  - Annualized Return (geometric)
   - Annualized Volatility
-  - Sharpe Ratio
+  - Sharpe Ratio (annualized)
   - Maximum Drawdown (MDD)
   - Calmar Ratio (Return / MDD)
   - Return / Average Drawdown
@@ -22,20 +22,18 @@ def annualized_return(daily_returns: np.ndarray, trading_days: int = 252) -> flo
     n_days = len(daily_returns)
     if n_days == 0:
         return 0.0
-    ann_ret = cumulative ** (trading_days / n_days) - 1
-    return ann_ret
+    return cumulative ** (trading_days / n_days) - 1
 
 
 def annualized_volatility(daily_returns: np.ndarray, trading_days: int = 252) -> float:
     """Annualized volatility from daily returns."""
+    if len(daily_returns) < 2:
+        return 0.0
     return np.std(daily_returns, ddof=1) * np.sqrt(trading_days)
 
 
 def sharpe_ratio(daily_returns: np.ndarray, trading_days: int = 252, rf: float = 0.0) -> float:
-    """
-    Annualized Sharpe ratio.
-    Sharpe = (annualized_return - rf) / annualized_vol
-    """
+    """Annualized Sharpe ratio = (ann_return - rf) / ann_vol."""
     ann_ret = annualized_return(daily_returns, trading_days)
     ann_vol = annualized_volatility(daily_returns, trading_days)
     if ann_vol < 1e-10:
@@ -45,6 +43,8 @@ def sharpe_ratio(daily_returns: np.ndarray, trading_days: int = 252, rf: float =
 
 def max_drawdown(daily_returns: np.ndarray) -> float:
     """Maximum drawdown from daily returns."""
+    if len(daily_returns) == 0:
+        return 0.0
     cumulative = np.cumprod(1 + daily_returns)
     peak = np.maximum.accumulate(cumulative)
     drawdown = (peak - cumulative) / peak
@@ -53,6 +53,8 @@ def max_drawdown(daily_returns: np.ndarray) -> float:
 
 def average_drawdown(daily_returns: np.ndarray) -> float:
     """Average drawdown from daily returns."""
+    if len(daily_returns) == 0:
+        return 0.0
     cumulative = np.cumprod(1 + daily_returns)
     peak = np.maximum.accumulate(cumulative)
     drawdown = (peak - cumulative) / peak
@@ -69,7 +71,10 @@ def calmar_ratio(daily_returns: np.ndarray, trading_days: int = 252) -> float:
 
 
 def return_over_avg_dd(daily_returns: np.ndarray, trading_days: int = 252) -> float:
-    """Return / Average Drawdown ratio (main metric in paper simulations)."""
+    """
+    Return / Average Drawdown ratio.
+    Main metric for simulation hypothesis testing (Section 4.2).
+    """
     ann_ret = annualized_return(daily_returns, trading_days)
     avg_dd = average_drawdown(daily_returns)
     if avg_dd < 1e-10:
@@ -85,16 +90,15 @@ def compute_all_metrics(daily_returns: np.ndarray, name: str = "") -> dict:
         "Volatility": annualized_volatility(daily_returns),
         "Sharpe": sharpe_ratio(daily_returns),
         "MDD": max_drawdown(daily_returns),
-        "Calmar Ratio": calmar_ratio(daily_returns),
-        "Return/Ave.DD": return_over_avg_dd(daily_returns),
+        "Calmar": calmar_ratio(daily_returns),
+        "Return/Avg.DD": return_over_avg_dd(daily_returns),
     }
 
 
-def print_metrics_table(metrics_list: list[dict]):
-    """Print metrics as a formatted table (matching paper Table 4 format)."""
+def print_metrics_table(metrics_list: list[dict]) -> pd.DataFrame:
+    """Print metrics as a formatted table (matching paper Table 4/5 format)."""
     df = pd.DataFrame(metrics_list)
     df = df.set_index("Portfolio")
-    # Format to 4 decimal places
     print(df.to_string(float_format=lambda x: f"{x:.4f}"))
     return df
 
@@ -137,33 +141,14 @@ def plot_cumulative_returns(
     return fig
 
 
-def sharpe_loss(portfolio_returns: 'torch.Tensor', eps: float = 1e-8) -> 'torch.Tensor':
-    """
-    Differentiable negative Sharpe ratio loss for training.
-    Loss = -mean(R_p) / (std(R_p) + eps)
-
-    "Two risk-reward functions are chosen to train neural networks:
-     Sharpe ratio and cumulative return" — Section 3.5.2
-    """
-    import torch
-    mean_ret = portfolio_returns.mean()
-    std_ret = portfolio_returns.std() + eps
-    return -mean_ret / std_ret
-
-
-def cumulative_return_loss(portfolio_returns: 'torch.Tensor') -> 'torch.Tensor':
-    """
-    Differentiable negative cumulative return loss for training.
-    Loss = -prod(1 + R_p)
-    """
-    import torch
-    return -torch.prod(1 + portfolio_returns)
-
+# ======================================================================
+# Main (smoke test)
+# ======================================================================
 
 if __name__ == "__main__":
-    # Quick test with random returns
     np.random.seed(42)
     daily_rets = np.random.normal(0.0003, 0.01, 252)
 
     metrics = compute_all_metrics(daily_rets, name="Random Portfolio")
     print_metrics_table([metrics])
+    print("✅ Evaluate tests passed!")
