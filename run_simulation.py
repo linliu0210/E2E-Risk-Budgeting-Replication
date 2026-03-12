@@ -104,7 +104,8 @@ def run_statistical_tests(
          H2: model-based > nominal RP  (R_based - R_parity)
     """
     n_total = len(scores_mb)
-    assert n_total == len(scores_mf) == SIM_N_SEEDS
+    assert n_total == len(scores_mf), "model-based and model-free must have same #seeds"
+    assert n_total >= 20, f"Z-test needs >=20 seeds, got {n_total}"
 
     # 1. Identify and remove top-5 outliers (by model-based score)
     idx_sorted = np.argsort(scores_mb)
@@ -237,9 +238,8 @@ def main():
         scores_mb = np.array(scores_retdd["model_based"])
         scores_mf = np.array(scores_retdd["model_free"])
 
-        # RP score: use first seed's RP metric (deterministic)
-        rp_scores = [m["Return/Avg.DD"] for m in all_metrics["nominal_rp"]]
-        rp_score = np.mean(rp_scores)
+        # Section 4.2: paper treats R_parity as a single fixed constant
+        rp_score = all_metrics["nominal_rp"][0]["Return/Avg.DD"]
 
         test_results = run_statistical_tests(
             scores_mb, scores_mf, rp_score,

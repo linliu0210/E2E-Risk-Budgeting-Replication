@@ -67,8 +67,8 @@ LR_DECAY_FACTOR = 0.9              # "decrease by factor 0.9" (p.18)
 LR_DECAY_EVERY = 3                 # "every three steps" (p.18)
 
 # Grid search candidate sets (Table 2/3, p.18)
-HP_LR_CANDIDATES = [50, 100, 150, 200, 300, 500]
-HP_STEPS_CANDIDATES = [5, 10, 15, 20, 25, 50]
+HP_LR_CANDIDATES = [50, 100, 150, 250, 300, 500]
+HP_STEPS_CANDIDATES = [5, 10, 25, 50]
 
 # ──────────────────────────────────────────────────────────────────────
 # Risk Budgeting Layer — Problem (4) (Section 3.3.1, p.10)

@@ -9,7 +9,7 @@ Reproduces:
 Setup:
   - Train: 2011-2014
   - Validation: 2015-2016
-  - Grid: η ∈ {50, 100, 150, 200, 300, 500}, n ∈ {5, 10, 15, 20, 25, 50}
+  - Grid: η ∈ {50, 100, 150, 250, 300, 500}, n ∈ {5, 10, 25, 50}
 """
 import numpy as np
 import os
@@ -116,10 +116,25 @@ def grid_search(
 
     results_df = pd.DataFrame(results)
 
-    # Find best validation metric
+    # Section 5.1: "First, filter the parameter sets that are in the top
+    # half of both train and validation sets. Then choose the one with the
+    # best performance in the validation set."
+    train_col = [c for c in results_df.columns if c.startswith("Train")][0]
     val_col = [c for c in results_df.columns if c.startswith("Val")][0]
-    best_idx = results_df[val_col].idxmax()
-    best_row = results_df.iloc[best_idx]
+
+    train_median = results_df[train_col].median()
+    val_median = results_df[val_col].median()
+
+    top_half = results_df[
+        (results_df[train_col] >= train_median)
+        & (results_df[val_col] >= val_median)
+    ]
+
+    if len(top_half) == 0:
+        top_half = results_df  # fallback: use all if filter empties
+
+    best_idx = top_half[val_col].idxmax()
+    best_row = results_df.loc[best_idx]
     best_params = {"lr": best_row["η"], "n_steps": int(best_row["n"])}
 
     print(f"\n  ★ Best: η={best_params['lr']}, n={best_params['n_steps']}, "

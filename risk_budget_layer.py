@@ -9,7 +9,7 @@ Convex formulation (p.10):
 
 DPP-compliant implementation:
     We pass L (Cholesky factor of Σ) as parameter instead of Σ itself,
-    and use cp.sum_squares(L @ y) = ||Ly||^2 = y^T L^T L y = y^T Σ y.
+    and use cp.sum_squares(L.T @ y) = ||Lᵀy||^2 = y^T L L^T y = y^T Σ y.
     This avoids the DPP violation from cp.quad_form(y, Sigma_param).
 
 After solving, normalize: z_i = y_i / Σ_j y_j
@@ -43,8 +43,8 @@ def build_risk_budget_layer(
     b = cp.Parameter(n_assets, nonneg=True)
     L = cp.Parameter((n_assets, n_assets))  # Cholesky factor
 
-    # Objective: min ||L y||^2 = y^T Σ y (DPP compliant!)
-    objective = cp.Minimize(cp.sum_squares(L @ y))
+    # Objective: min ||Lᵀy||^2 = y^T L Lᵀ y = y^T Σ y (DPP compliant!)
+    objective = cp.Minimize(cp.sum_squares(L.T @ y))
 
     # Constraint: b^T ln(y) >= c
     constraints = [b @ cp.log(y) >= c]
